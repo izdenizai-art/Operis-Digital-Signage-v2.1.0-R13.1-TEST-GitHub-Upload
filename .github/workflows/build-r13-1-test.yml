@@ -1,1 +1,141 @@
+name: Build R13.1 TEST Android APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 35 SDK
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Optional fixed signing configuration
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.OPERIS_TEST_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.OPERIS_TEST_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.OPERIS_TEST_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.OPERIS_TEST_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "${KEYSTORE_B64:-}" ] && [ -n "${KEYSTORE_PASSWORD:-}" ] && [ -n "${KEY_ALIAS:-}" ] && [ -n "${KEY_PASSWORD:-}" ]; then
+            printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/operis-test-signing.jks"
+            echo "OPERIS_KEYSTORE_FILE=$RUNNER_TEMP/operis-test-signing.jks" >> "$GITHUB_ENV"
+            echo "OPERIS_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "OPERIS_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "OPERIS_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+            echo "OPERIS_FIXED_SIGNING=1" >> "$GITHUB_ENV"
+          else
+            echo "OPERIS_FIXED_SIGNING=0" >> "$GITHUB_ENV"
+            echo "Fixed signing secrets not configured; clean-install TEST APK will use the runner debug key."
+          fi
+
+      - name: R13.1 source contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/r13_1_install_contract_test.py
+          python3 tests/ui_contract_test.py
+          python3 tests/offline_state_contract_test.py
+          python3 tests/command_contract_test.py
+          python3 tests/media_cache_contract_test.py
+          python3 tests/telemetry_contract_test.py
+          python3 tests/preview_contract_test.py
+          node tests/schedule_engine_test.mjs
+          node --check player.js
+          cmp -s player.js app/src/main/assets/player.js
+
+      - name: Pure Java policy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build/pure-java-tests
+          mkdir -p build/pure-java-tests
+          javac -d build/pure-java-tests \
+            app/src/main/java/tr/izdeniz/signage/MediaCachePolicy.java \
+            app/src/main/java/tr/izdeniz/signage/NativeHardwareTelemetry.java \
+            app/src/main/java/tr/izdeniz/signage/PreviewPolicy.java \
+            app/src/main/java/tr/izdeniz/signage/CommandCapabilityPolicy.java \
+            tests/java/MediaCachePolicyStandaloneTest.java \
+            tests/java/NativeHardwareTelemetryStandaloneTest.java \
+            tests/java/PreviewPolicyStandaloneTest.java \
+            tests/java/CommandCapabilityPolicyStandaloneTest.java
+          java -cp build/pure-java-tests MediaCachePolicyStandaloneTest
+          java -cp build/pure-java-tests NativeHardwareTelemetryStandaloneTest
+          java -cp build/pure-java-tests PreviewPolicyStandaloneTest
+          java -cp build/pure-java-tests CommandCapabilityPolicyStandaloneTest
+
+      - name: Unit tests
+        run: gradle testDebugUnitTest --stacktrace
+
+      - name: Build debug APK
+        run: gradle assembleDebug --stacktrace
+
+      - name: Verify and prepare outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          export PATH="$BUILD_TOOLS:$PATH"
+          APK="$(find app/build/outputs/apk/debug -type f -name '*.apk' | head -n 1)"
+          test -n "$APK"
+          mkdir -p dist
+          OUT="dist/Operis-Digital-Signage-v2.1.0-R13.1-TEST.apk"
+          cp "$APK" "$OUT"
+
+          zipalign -c -v 4 "$OUT" | tee dist/zipalign.txt
+          apksigner verify --verbose --print-certs "$OUT" | tee dist/apksigner.txt
+          aapt dump badging "$OUT" | tee dist/aapt-badging.txt
+
+          grep -q "package: name='tr.izdeniz.signage'" dist/aapt-badging.txt
+          grep -q "versionCode='20103'" dist/aapt-badging.txt
+          grep -q "versionName='2.1.0-r13.1-test'" dist/aapt-badging.txt
+          grep -q "application-label:'Operis Digital Signage'" dist/aapt-badging.txt
+
+          sha256sum "$OUT" > dist/Operis-Digital-Signage-v2.1.0-R13.1-TEST-SHA256.txt
+          {
+            echo "Operis Digital Signage v2.1.0-R13.1 TEST verification"
+            echo "Workflow commit: $GITHUB_SHA"
+            echo "Package: tr.izdeniz.signage"
+            echo "VersionCode: 20103"
+            echo "VersionName: 2.1.0-r13.1-test"
+            echo "Fixed signing secrets used: ${OPERIS_FIXED_SIGNING:-0}"
+            cat dist/Operis-Digital-Signage-v2.1.0-R13.1-TEST-SHA256.txt
+            echo
+            cat dist/apksigner.txt
+          } > dist/Operis-Digital-Signage-v2.1.0-R13.1-TEST-VERIFICATION.txt
+
+          zip -qr dist/Operis-Digital-Signage-v2.1.0-R13.1-Source.zip . \
+            -x '.git/*' '.gradle/*' 'app/build/*' 'build/*' 'dist/*'
+          sha256sum dist/Operis-Digital-Signage-v2.1.0-R13.1-Source.zip > dist/Operis-Digital-Signage-v2.1.0-R13.1-Source-SHA256.txt
+
+      - name: Upload APK and exact source
+        uses: actions/upload-artifact@v4
+        with:
+          name: Operis-Digital-Signage-v2.1.0-R13.1-TEST
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 90
 

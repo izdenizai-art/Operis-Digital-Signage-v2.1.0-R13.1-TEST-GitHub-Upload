@@ -1,0 +1,32 @@
+OPERIS DIGITAL SIGNAGE v2.1.0-R13.1 TEST - GITHUB BUILD
+
+1) ZIP içeriğini GitHub repository köküne doğrudan yükleyin.
+   Repository kökünde app/, tests/, .github/, build.gradle ve settings.gradle görünmelidir.
+   Kaynakları ikinci bir klasörün içine koymayın.
+
+2) GitHub -> Actions -> "Build R13.1 TEST Android APK" -> Run workflow.
+
+3) Build tamamlandığında Artifacts bölümünden:
+   Operis-Digital-Signage-v2.1.0-R13.1-TEST
+   paketini indirin.
+
+4) Artifact içinde APK, APK SHA256, verification report ve build ile aynı kaynak snapshot ZIP'i bulunur.
+
+5) İlk saha testi temiz kurulumdur. Önceki uygulama kaldırılmış olmalıdır.
+
+6) Opsiyonel sabit test imzası kullanmak isterseniz private key/keystore dosyasını kaynak ZIP'e KOYMAYIN.
+   GitHub Actions Secrets içine şu değerler kullanıcı tarafından eklenebilir:
+   OPERIS_TEST_KEYSTORE_B64
+   OPERIS_TEST_KEYSTORE_PASSWORD
+   OPERIS_TEST_KEY_ALIAS
+   OPERIS_TEST_KEY_PASSWORD
+   Bu secret'lar yoksa workflow standart debug test imzasıyla temiz kurulum APK'sı üretir.
+
+R13.1 kurulum tabanı:
+- package: tr.izdeniz.signage
+- minSdk: 30
+- targetSdk: 35
+- versionCode: 20103
+- versionName: 2.1.0-r13.1-test
+- görünür ad: Operis Digital Signage
+- manifest boot receiver: yalnız BOOT_COMPLETED

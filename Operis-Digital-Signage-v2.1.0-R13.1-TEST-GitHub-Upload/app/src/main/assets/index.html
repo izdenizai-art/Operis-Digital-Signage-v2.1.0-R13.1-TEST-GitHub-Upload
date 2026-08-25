@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>Operis Digital Signage</title>
+  <style>
+    :root{
+      --operis-bg:#071B2A;
+      --operis-panel:#0D334B;
+      --operis-accent:#00B9B5;
+      --operis-text:#FFFFFF;
+      --operis-secondary:#C9D6DF;
+      --operis-danger:#FF5C70;
+      --operis-warning:#F7C948;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--operis-bg);color:var(--operis-text);font-family:Arial,Helvetica,sans-serif}
+    body{user-select:none}
+    button,input{font:inherit}
+    .hidden{display:none!important}
+    #setup{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 10%,#104764 0,#071B2A 58%);z-index:1000}
+    .setup-card{width:min(860px,86vw);padding:48px;border-radius:28px;background:rgba(13,51,75,.96);box-shadow:0 28px 90px rgba(0,0,0,.38);border:1px solid rgba(255,255,255,.10)}
+    .brand-line{display:flex;align-items:center;gap:18px;margin-bottom:26px}
+    .brand-mark{display:grid;grid-template-columns:repeat(2,14px);grid-template-rows:repeat(2,14px);gap:5px}
+    .brand-mark i{display:block;border-radius:5px;background:var(--operis-accent)}
+    .brand-mark i:nth-child(2){background:#32D6FF}.brand-mark i:nth-child(3){background:#B8E94D}.brand-mark i:nth-child(4){background:#FFB643}
+    .product{font-size:34px;font-weight:800;letter-spacing:.3px}.product small{display:block;color:var(--operis-secondary);font-size:16px;font-weight:500;margin-top:4px}
+    .field{margin:18px 0}.field label{display:block;margin-bottom:8px;color:var(--operis-secondary);font-size:16px}.field input{width:100%;padding:16px 18px;border-radius:14px;border:1px solid rgba(255,255,255,.18);background:#061621;color:#fff;outline:none}.field input:focus{border-color:var(--operis-accent);box-shadow:0 0 0 3px rgba(0,185,181,.16)}
+    .setup-actions{display:flex;align-items:center;gap:16px;margin-top:24px}.setup-actions button{border:0;border-radius:14px;padding:15px 24px;background:var(--operis-accent);color:#022126;font-weight:800}.setup-status{white-space:pre-wrap;color:var(--operis-secondary);font-size:15px;line-height:1.45}
+    #player{position:fixed;inset:0;display:none;background:var(--operis-bg)}
+    #shellHeader{position:absolute;left:22px;right:22px;top:18px;height:82px;z-index:20;display:flex;align-items:center;justify-content:space-between;padding:0 24px;border-radius:22px;background:rgba(13,51,75,.94);box-shadow:0 10px 30px rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.08)}
+    .shell-left{display:flex;align-items:center;gap:20px}.org-logo{width:56px;height:56px;object-fit:contain;border-radius:12px;display:none}.org-text{display:flex;flex-direction:column;gap:3px}.org-name{font-size:15px;color:var(--operis-secondary);font-weight:600}.station-name{font-size:27px;font-weight:800}.shell-right{text-align:right}.shell-clock{font-size:34px;font-weight:800;letter-spacing:1px}.shell-date{font-size:15px;color:var(--operis-secondary);margin-top:3px}
+    #baseCanvas,#scheduledCanvas{position:absolute;inset:0;overflow:hidden}
+    #baseCanvas{z-index:5;background:var(--operis-bg)}
+    #scheduledCanvas{z-index:100;pointer-events:none}
+    .fallback-passenger{position:absolute;left:22px;right:22px;top:118px;bottom:64px;display:grid;grid-template-rows:auto 1fr auto;gap:16px}
+    .fallback-title{display:flex;align-items:center;justify-content:space-between;padding:16px 22px;border-radius:18px;background:var(--operis-panel);font-size:22px;font-weight:800}
+    .trip-table{background:var(--operis-panel);border-radius:22px;padding:12px 18px;overflow:hidden}.trip-row{display:grid;grid-template-columns:160px 1fr 180px 190px;gap:12px;align-items:center;padding:13px 12px;border-bottom:1px solid rgba(255,255,255,.08);font-size:23px}.trip-row:last-child{border-bottom:0}.trip-row .time{font-size:30px;font-weight:900;color:var(--operis-accent)}.trip-row .remain{text-align:right;font-weight:800}.empty-state{display:flex;align-items:center;justify-content:center;height:100%;color:var(--operis-secondary);font-size:24px}
+    .ticker{padding:16px 22px;border-radius:18px;background:var(--operis-panel);font-size:21px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    #statusBar{position:absolute;left:24px;right:24px;bottom:12px;z-index:30;display:flex;justify-content:space-between;pointer-events:none;color:var(--operis-secondary);font-size:13px}.status-pill{padding:7px 12px;border-radius:999px;background:rgba(4,20,31,.72)}.status-pill.warn{color:var(--operis-warning)}.status-pill.ok{color:#9DF2D0}.status-pill.danger{color:var(--operis-danger)}
+    .component{position:absolute;display:flex;overflow:hidden;align-items:center;padding:0;white-space:normal}.component.table{display:block;overflow:hidden}.component img,.component video{width:100%;height:100%;object-fit:contain;display:block}.component .media-fill{width:100%;height:100%;display:flex;align-items:center;justify-content:center}.component .media-missing{color:var(--operis-secondary);font-size:18px;padding:12px;text-align:center}
+    .component-table-row{display:grid;grid-template-columns:120px 1fr 160px 170px;gap:10px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.10);align-items:center}.component-table-row:last-child{border-bottom:0}.component-table-row .t{font-weight:900;color:var(--operis-accent)}.component-table-row .r{text-align:right}
+    .media-stage{position:absolute;inset:0;background:#000;display:flex;align-items:center;justify-content:center}.media-stage.region{background:transparent}.media-stage img,.media-stage video{width:100%;height:100%;object-fit:contain}.media-stage .text-card{max-width:88%;padding:34px 44px;border-radius:24px;background:rgba(13,51,75,.96);color:white;font-size:42px;text-align:center;box-shadow:0 18px 60px rgba(0,0,0,.35)}
+    .emergency{position:absolute;inset:0;z-index:500;display:flex;align-items:center;justify-content:center;padding:80px;background:rgba(120,0,16,.94);font-size:54px;font-weight:900;text-align:center}
+  </style>
+</head>
+<body>
+  <section id="setup">
+    <form id="setupForm" class="setup-card">
+      <div class="brand-line"><span class="brand-mark"><i></i><i></i><i></i><i></i></span><div class="product">Operis Digital Signage<small>Android TV / TV Box Player</small></div></div>
+      <div class="field"><label for="server">Sunucu Adresi</label><input id="server" type="url" inputmode="url" placeholder="http://sunucu:port" autocomplete="off"></div>
+      <div class="field"><label for="code">Cihaz Kodu</label><input id="code" type="text" placeholder="TVBOX-001" autocomplete="off"></div>
+      <div class="setup-actions"><button type="submit">Bağlan ve Kaydet</button><div id="setupStatus" class="setup-status"></div></div>
+    </form>
+  </section>
+
+  <main id="player">
+    <div id="baseCanvas"></div>
+    <div id="scheduledCanvas"></div>
+    <header id="shellHeader">
+      <div class="shell-left"><img id="orgLogo" class="org-logo" alt=""><span class="brand-mark"><i></i><i></i><i></i><i></i></span><div class="org-text"><span id="orgName" class="org-name">Operis Digital Signage</span><span id="station" class="station-name">Atanmamış Cihaz</span></div></div>
+      <div class="shell-right"><div id="clock" class="shell-clock">--:--:--</div><div id="clockDate" class="shell-date">Saat bilgisi bekleniyor</div></div>
+    </header>
+    <div id="statusBar"><span id="syncState" class="status-pill warn">BAŞLATILIYOR</span><span id="revision" class="status-pill">Rev -</span></div>
+  </main>
+
+  <script src="schedule_engine.js"></script>
+  <script src="player.js"></script>
+</body>
+</html>

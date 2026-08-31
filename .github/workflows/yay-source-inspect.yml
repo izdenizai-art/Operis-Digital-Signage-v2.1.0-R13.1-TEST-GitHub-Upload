@@ -1,0 +1,33 @@
+name: YAY Source Inspect
+
+on:
+  push:
+    branches: [yay-pi-universal-build-v2]
+    paths:
+      - '.github/workflows/yay-source-inspect.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct source and print kiosk files
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat yay-pi-ci/source.b64.000 yay-pi-ci/source.b64.001 yay-pi-ci/source.b64.002 | base64 -d > /tmp/yay-source.tar.gz
+          mkdir -p /tmp/yay-src
+          tar -xzf /tmp/yay-source.tar.gz -C /tmp/yay-src
+          echo '=== FILE LIST ==='
+          find /tmp/yay-src -maxdepth 3 -type f | sort
+          echo '=== KIOSK UNIT ==='
+          cat /tmp/yay-src/systemd/yay-kiosk.service
+          echo '=== FIRSTBOOT ==='
+          cat /tmp/yay-src/scripts/firstboot.sh
+          echo '=== KIOSK SCRIPT ==='
+          cat /tmp/yay-src/scripts/kiosk.sh
+          echo '=== OTHER X REFERENCES ==='
+          grep -RInE 'xinit|Xorg|chromium|openbox|startx|vt[0-9]|DISPLAY=' /tmp/yay-src || true

@@ -14,18 +14,28 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Reconstruct source and print kiosk files
+      - name: Reconstruct source and inspect setup UI
         shell: bash
         run: |
           set -euo pipefail
           cat yay-pi-ci/source.b64.000 yay-pi-ci/source.b64.001 yay-pi-ci/source.b64.002 | base64 -d > /tmp/yay-source.tar.gz
+          rm -rf /tmp/yay-src
           mkdir -p /tmp/yay-src
           tar -xzf /tmp/yay-source.tar.gz -C /tmp/yay-src
+          echo '=== FILE LIST ==='
+          find /tmp/yay-src -maxdepth 3 -type f | sort
+          echo '=== SETUP UI MATCHES ==='
+          grep -RInE 'Sunucu|Bağlantı|Baglanti|server_url|8080|8765|refresh|setInterval|location.reload|input|Kaydet' /tmp/yay-src || true
+          echo '=== LOCAL PLAYER ==='
+          sed -n '1,320p' /tmp/yay-src/yay/local_player.py || true
+          echo '=== WEB FILES ==='
+          for f in /tmp/yay-src/web/*; do
+            echo "--- $f ---"
+            sed -n '1,360p' "$f"
+          done
+          echo '=== INJECT IMAGE ==='
+          sed -n '1,360p' /tmp/yay-src/image/inject-image.sh || true
+          echo '=== FIRSTBOOT ==='
+          sed -n '1,260p' /tmp/yay-src/scripts/yay-firstboot
           echo '=== KIOSK UNIT ==='
           cat /tmp/yay-src/systemd/yay-kiosk.service
-          echo '=== FIRSTBOOT SCRIPT ==='
-          cat /tmp/yay-src/scripts/yay-firstboot
-          echo '=== KIOSK SESSION SCRIPT ==='
-          cat /tmp/yay-src/scripts/yay-kiosk-session
-          echo '=== OTHER X REFERENCES ==='
-          grep -RInE 'xinit|Xorg|chromium|openbox|startx|vt[0-9]|DISPLAY=' /tmp/yay-src || true

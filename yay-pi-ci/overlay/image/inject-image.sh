@@ -62,7 +62,7 @@ sudo chroot "$ROOT" /usr/bin/qemu-aarch64-static /bin/bash -lc '
   usermod -a -G video,audio,input,render yay || true
 '
 
-sudo rm -f "$ROOT/usr/sbin/policy-rc.d"
+sudo rm -f "$ROOT/usr/sbin/policy-rc.d" "$ROOT/usr/bin/qemu-aarch64-static"
 for p in "$ROOT/dev/pts" "$ROOT/dev" "$ROOT/proc" "$ROOT/sys"; do
   mountpoint -q "$p" && sudo umount "$p"
 done

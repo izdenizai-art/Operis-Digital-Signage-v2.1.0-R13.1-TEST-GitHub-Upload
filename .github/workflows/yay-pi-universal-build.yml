@@ -87,7 +87,7 @@ jobs:
           test -f "$WORK/root/etc/systemd/system/yay-firstboot.service"
           test -L "$WORK/root/etc/systemd/system/multi-user.target.wants/yay-firstboot.service"
           test -f "$WORK/root/var/lib/yay/device.json"
-          python3 - <<'PY'
+          sudo python3 - <<'PY'
           import json
           d=json.load(open('/tmp/final-inspect/root/var/lib/yay/device.json', encoding='utf-8'))
           assert d['server_url'] == ''

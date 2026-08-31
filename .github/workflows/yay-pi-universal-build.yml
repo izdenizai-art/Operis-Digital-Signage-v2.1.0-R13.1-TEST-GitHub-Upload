@@ -100,43 +100,62 @@ jobs:
           trap - EXIT
           rm -f "$WORK/final.img"
 
-      - name: Generate final checksum and internal transport chunks
+      - name: Generate final checksum
         shell: bash
         run: |
           set -euo pipefail
           cd /tmp
           sha256sum "$OUT_NAME" > "$OUT_NAME.sha256"
           xz -t "$OUT_NAME"
-          mkdir -p /tmp/yay-transport
-          split -b 300M -d -a 2 "$OUT_NAME" /tmp/yay-transport/part-
-          test "$(find /tmp/yay-transport -type f | wc -l)" -eq 2
-          cat /tmp/yay-transport/part-00 /tmp/yay-transport/part-01 > /tmp/transport-check.img.xz
-          cmp "$OUT_NAME" /tmp/transport-check.img.xz
           sha256sum --check "$OUT_NAME.sha256"
-          rm /tmp/transport-check.img.xz
           cat "$OUT_NAME.sha256"
-          stat --printf='%n %s bytes\n' "$OUT_NAME" /tmp/yay-transport/part-00 /tmp/yay-transport/part-01
+          stat --printf='%n %s bytes\n' "$OUT_NAME"
+
+      - name: Upload final single image to temporary GoFile server
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp
+          curl --fail-with-body --location --retry 3 --retry-all-errors \
+            --form "file=@$OUT_NAME" \
+            https://upload.gofile.io/uploadfile \
+            --output /tmp/gofile-response.json
+          cat /tmp/gofile-response.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path('/tmp/gofile-response.json').read_text(encoding='utf-8'))
+          if payload.get('status') != 'ok':
+              raise SystemExit(f"GoFile upload failed: {payload}")
+
+          links = []
+          def walk(value):
+              if isinstance(value, dict):
+                  for item in value.values():
+                      walk(item)
+              elif isinstance(value, list):
+                  for item in value:
+                      walk(item)
+              elif isinstance(value, str) and value.startswith('https://gofile.io/d/'):
+                  links.append(value)
+          walk(payload)
+          if not links:
+              raise SystemExit(f"No GoFile download page in response: {payload}")
+          page = links[0]
+          Path('/tmp/YAY-GoFile-link.txt').write_text(page + '\n', encoding='utf-8')
+          print('YAY_GoFile_URL=' + page)
+          PY
+          PAGE=$(cat /tmp/YAY-GoFile-link.txt)
+          curl --fail --location --retry 3 --output /tmp/gofile-page-check.html "$PAGE"
+          test -s /tmp/gofile-page-check.html
 
       - uses: actions/upload-artifact@v4
         with:
-          name: YAY-Pi-internal-part-00
-          path: /tmp/yay-transport/part-00
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 7
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: YAY-Pi-internal-part-01
-          path: /tmp/yay-transport/part-01
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 7
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: YAY-Pi-final-sha256
-          path: /tmp/YAY-Pi-Universal-V1.0.0-RPi3-4-5.img.xz.sha256
+          name: YAY-Pi-final-sha256-and-link
+          path: |
+            /tmp/YAY-Pi-Universal-V1.0.0-RPi3-4-5.img.xz.sha256
+            /tmp/YAY-GoFile-link.txt
           compression-level: 0
           if-no-files-found: error
           retention-days: 7

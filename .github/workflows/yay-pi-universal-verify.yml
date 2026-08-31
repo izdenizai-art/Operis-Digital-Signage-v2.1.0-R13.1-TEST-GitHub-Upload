@@ -20,12 +20,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat yay-pi-ci/source.b64.* | base64 -d > /tmp/yay-pi-source.tar.gz
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, re
+          parts = sorted(Path('yay-pi-ci').glob('source.b64.*'))
+          raw = b''.join(p.read_bytes() for p in parts)
+          clean = re.sub(rb'[^A-Za-z0-9+/=]', b'', raw)
+          print('parts=', [p.name for p in parts])
+          print('raw_len=', len(raw), 'clean_len=', len(clean), 'mod4=', len(clean) % 4)
+          clean += b'=' * ((4 - len(clean) % 4) % 4)
+          data = base64.b64decode(clean, validate=False)
+          Path('/tmp/yay-pi-source.tar.gz').write_bytes(data)
+          print('decoded_len=', len(data), 'head=', data[:8].hex(), 'tail=', data[-8:].hex())
+          PY
           gzip -t /tmp/yay-pi-source.tar.gz
           mkdir -p /tmp/yay-src
           tar -xzf /tmp/yay-pi-source.tar.gz -C /tmp/yay-src
           echo '=== SOURCE TREE ==='
-          find /tmp/yay-src -maxdepth 3 -type f -printf '%P\n' | sort
+          find /tmp/yay-src -maxdepth 4 -type f -printf '%P\n' | sort
           echo '=== ARCHIVE SHA256 ==='
           sha256sum /tmp/yay-pi-source.tar.gz
       - name: Run Python tests
@@ -33,7 +45,7 @@ jobs:
         run: |
           set -euo pipefail
           cd /tmp/yay-src
-          if find . -maxdepth 3 -type f -name 'test_*.py' -o -name '*_test.py' | grep -q .; then
+          if find . -type f \( -name 'test_*.py' -o -name '*_test.py' \) | grep -q .; then
             python3 -m pip install --disable-pip-version-check -q pytest requests
             python3 -m pytest -q
           else

@@ -44,7 +44,7 @@ jobs:
           set -euo pipefail
           cp -a yay-pi-ci/overlay/. /tmp/yay-src/
           cp yay-pi-ci/regression/test_final_image_regressions.py /tmp/yay-src/tests/test_final_image_regressions.py
-          cat yay-pi-ci/v102-overlay.b64.000 yay-pi-ci/v102-overlay.b64.001 yay-pi-ci/v102-overlay.b64.002 | base64 -d > /tmp/yay-v102-overlay.tar.gz
+          cat yay-pi-ci/v102-overlay.b64.000p0 yay-pi-ci/v102-overlay.b64.000p1 yay-pi-ci/v102-overlay.b64.001 yay-pi-ci/v102-overlay.b64.002 | base64 -d > /tmp/yay-v102-overlay.tar.gz
           echo "$V102_OVERLAY_SHA256  /tmp/yay-v102-overlay.tar.gz" | sha256sum --check --strict
           gzip -t /tmp/yay-v102-overlay.tar.gz
           tar -xzf /tmp/yay-v102-overlay.tar.gz -C /tmp/yay-src
@@ -128,7 +128,6 @@ jobs:
           trap cleanup EXIT
           sudo mount -o ro "${LOOP}p2" "$WORK/root"
           sudo mount -o ro "${LOOP}p1" "$WORK/boot"
-
           test -f "$WORK/root/opt/yay/app/yay/agent.py"
           test -f "$WORK/root/opt/yay/app/yay/service.py"
           test -f "$WORK/root/opt/yay/app/yay/status.py"
@@ -165,7 +164,6 @@ jobs:
           ! grep -q 'NoNewPrivileges=true' "$WORK/root/etc/systemd/system/yay-local-player.service"
           test -s "$WORK/boot/userconf.txt"
           grep -q '^yayadmin:' "$WORK/boot/userconf.txt"
-
           sudo python3 - <<'PY'
           import json
           d=json.load(open('/tmp/final-inspect/root/var/lib/yay/device.json', encoding='utf-8'))
@@ -173,7 +171,6 @@ jobs:
           assert d['token'] == ''
           assert d['runtime_version'] == 'pi-universal-1.0.2'
           PY
-
           test -f "$WORK/boot/bcm2710-rpi-3-b-plus.dtb"
           test -f "$WORK/boot/bcm2711-rpi-4-b.dtb"
           test -f "$WORK/boot/bcm2712-rpi-5-b.dtb"

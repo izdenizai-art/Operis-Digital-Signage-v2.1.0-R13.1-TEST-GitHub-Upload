@@ -58,9 +58,11 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y qemu-user-static binfmt-support
+          sudo apt-get install -y qemu-user-static binfmt-support cloud-guest-utils e2fsprogs parted
           sudo update-binfmts --enable qemu-aarch64 || true
           command -v qemu-aarch64-static
+          command -v growpart
+          command -v resize2fs
 
       - name: Download and verify official Raspberry Pi OS base
         shell: bash

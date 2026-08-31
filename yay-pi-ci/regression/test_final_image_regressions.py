@@ -24,7 +24,8 @@ def test_image_provisions_gui_before_first_boot_and_bypasses_user_wizard():
     assert "apt-get install" in inject
     assert "userconf.txt" in inject
     assert "getty@tty1.service" in inject
-    assert "multi-user.target.wants/yay-firstboot.service" not in inject
+    assert "ln -sf ../yay-firstboot.service" not in inject
+    assert 'rm -f "$ROOT/etc/systemd/system/multi-user.target.wants/yay-firstboot.service"' in inject
 
 
 def test_firstboot_no_longer_downloads_runtime_packages():

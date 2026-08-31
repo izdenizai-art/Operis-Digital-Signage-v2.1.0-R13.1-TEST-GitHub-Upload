@@ -8,6 +8,8 @@ WORK=$(mktemp -d)
 ROOT="$WORK/root"
 BOOT="$WORK/boot"
 LOOP=''
+RESOLV_KIND='none'
+RESOLV_LINK=''
 
 cleanup(){
   set +e
@@ -43,6 +45,13 @@ sudo chmod +x "$ROOT/opt/yay/scripts/"*
 # Run ARM64 package installation inside the image at build time so first boot
 # never depends on live mirrors or a user-triggered apt update.
 sudo install -m 0755 "$(command -v qemu-aarch64-static)" "$ROOT/usr/bin/qemu-aarch64-static"
+if [ -L "$ROOT/etc/resolv.conf" ]; then
+  RESOLV_KIND='link'
+  RESOLV_LINK=$(readlink "$ROOT/etc/resolv.conf")
+elif [ -f "$ROOT/etc/resolv.conf" ]; then
+  RESOLV_KIND='file'
+  sudo cp -a "$ROOT/etc/resolv.conf" "$WORK/resolv.conf.original"
+fi
 sudo rm -f "$ROOT/etc/resolv.conf"
 sudo cp /etc/resolv.conf "$ROOT/etc/resolv.conf"
 echo '#!/bin/sh' | sudo tee "$ROOT/usr/sbin/policy-rc.d" >/dev/null
@@ -58,11 +67,19 @@ sudo chroot "$ROOT" /usr/bin/qemu-aarch64-static /bin/bash -lc '
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -o Acquire::Retries=5
   apt-get install -y --no-install-recommends xserver-xorg xinit openbox chromium python3-requests python3-cryptography scrot watchdog fonts-dejavu-core ca-certificates
-  id yay >/dev/null 2>&1 || useradd -m -u 1000 -s /usr/sbin/nologin yay
+  id yay >/dev/null 2>&1 || useradd -r -m -s /usr/sbin/nologin yay
   usermod -a -G video,audio,input,render yay || true
+  chown -R yay:yay /var/lib/yay /home/yay
+  apt-get clean
+  rm -rf /var/lib/apt/lists/*
 '
 
-sudo rm -f "$ROOT/usr/sbin/policy-rc.d" "$ROOT/usr/bin/qemu-aarch64-static"
+sudo rm -f "$ROOT/usr/sbin/policy-rc.d" "$ROOT/usr/bin/qemu-aarch64-static" "$ROOT/etc/resolv.conf"
+if [ "$RESOLV_KIND" = 'link' ]; then
+  sudo ln -s "$RESOLV_LINK" "$ROOT/etc/resolv.conf"
+elif [ "$RESOLV_KIND" = 'file' ]; then
+  sudo cp -a "$WORK/resolv.conf.original" "$ROOT/etc/resolv.conf"
+fi
 for p in "$ROOT/dev/pts" "$ROOT/dev" "$ROOT/proc" "$ROOT/sys"; do
   mountpoint -q "$p" && sudo umount "$p"
 done
@@ -74,7 +91,6 @@ sudo tee "$ROOT/etc/sudoers.d/yay-control" >/dev/null <<'EOF'
 yay ALL=(root) NOPASSWD: /usr/local/sbin/yay-control *
 EOF
 sudo chmod 0440 "$ROOT/etc/sudoers.d/yay-control"
-sudo chown -R 1000:1000 "$ROOT/var/lib/yay" "$ROOT/home/yay"
 
 # The appliance owns tty1. Prevent the console login service from racing Xorg.
 sudo ln -sf /dev/null "$ROOT/etc/systemd/system/getty@tty1.service"
@@ -83,11 +99,11 @@ sudo systemctl --root="$ROOT" enable yay-local-player.service yay-agent.service 
 sudo systemctl --root="$ROOT" enable watchdog.service >/dev/null 2>&1 || true
 
 # Raspberry Pi OS otherwise asks for a username/password on first boot. The
-# documented userconf mechanism bypasses that wizard. The generated password
-# is random and the pre-created kiosk account has nologin as its shell.
+# documented userconf mechanism bypasses that wizard. This maintenance account
+# gets a build-random password and is not used by the kiosk runtime.
 RANDOM_PASSWORD=$(openssl rand -hex 32)
 PASSWORD_HASH=$(printf '%s' "$RANDOM_PASSWORD" | openssl passwd -6 -stdin)
-printf 'yay:%s\n' "$PASSWORD_HASH" | sudo tee "$BOOT/userconf.txt" >/dev/null
+printf 'yayadmin:%s\n' "$PASSWORD_HASH" | sudo tee "$BOOT/userconf.txt" >/dev/null
 unset RANDOM_PASSWORD PASSWORD_HASH
 
 if [ -f "$BOOT/config.txt" ]; then

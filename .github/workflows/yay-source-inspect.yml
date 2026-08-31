@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Reconstruct source and inspect setup UI
+      - name: Reconstruct source and prove regressions fail before fixes
         shell: bash
         run: |
           set -euo pipefail
@@ -22,20 +22,11 @@ jobs:
           rm -rf /tmp/yay-src
           mkdir -p /tmp/yay-src
           tar -xzf /tmp/yay-source.tar.gz -C /tmp/yay-src
-          echo '=== FILE LIST ==='
-          find /tmp/yay-src -maxdepth 3 -type f | sort
-          echo '=== SETUP UI MATCHES ==='
-          grep -RInE 'Sunucu|Bağlantı|Baglanti|server_url|8080|8765|refresh|setInterval|location.reload|input|Kaydet' /tmp/yay-src || true
-          echo '=== LOCAL PLAYER ==='
-          sed -n '1,320p' /tmp/yay-src/yay/local_player.py || true
-          echo '=== WEB FILES ==='
-          for f in /tmp/yay-src/web/*; do
-            echo "--- $f ---"
-            sed -n '1,360p' "$f"
-          done
-          echo '=== INJECT IMAGE ==='
-          sed -n '1,360p' /tmp/yay-src/image/inject-image.sh || true
-          echo '=== FIRSTBOOT ==='
-          sed -n '1,260p' /tmp/yay-src/scripts/yay-firstboot
-          echo '=== KIOSK UNIT ==='
-          cat /tmp/yay-src/systemd/yay-kiosk.service
+          cp yay-pi-ci/regression/test_final_image_regressions.py /tmp/yay-src/tests/test_final_image_regressions.py
+          cd /tmp/yay-src
+          python3 -m pip install --disable-pip-version-check -q pytest
+          if python3 -m pytest -q tests/test_final_image_regressions.py; then
+            echo 'Regression tests unexpectedly passed before fixes' >&2
+            exit 1
+          fi
+          echo 'Regression failures reproduced as expected.'

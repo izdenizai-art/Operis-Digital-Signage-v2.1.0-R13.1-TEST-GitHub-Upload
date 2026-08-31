@@ -1,0 +1,7 @@
+#!/bin/bash
+set -euo pipefail
+# Runtime packages are provisioned into the image during CI. This service is
+# retained only as a safe no-network finalizer for older deployments.
+systemctl mask getty@tty1.service >/dev/null 2>&1 || true
+systemctl disable yay-firstboot.service >/dev/null 2>&1 || true
+exit 0

@@ -19,11 +19,13 @@ jobs:
       BASE_URL: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2026-06-19/2026-06-18-raspios-trixie-arm64-lite.img.xz
       BASE_SHA_URL: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2026-06-19/2026-06-18-raspios-trixie-arm64-lite.img.xz.sha256
       BASE_SHA256: acff736ca7945e3b305f07cda4abdb870910e12634991da69783611756e381b3
-      OUT_NAME: YAY-Pi-Universal-V1.0.1-RPi3-4-5.img.xz
+      V102_OVERLAY_SHA256: 804f736488aa7f62af1f319fa782a420e4ec5d3dd9e93ac14528d2048e498c46
+      OUT_NAME: YAY-Pi-Universal-V1.0.2-RPi3-4-5.img.xz
+      SRC_NAME: YAY-Pi-Universal-V1.0.2-SOURCE.zip
     steps:
       - uses: actions/checkout@v4
 
-      - name: Reconstruct exact YAY source
+      - name: Reconstruct exact YAY baseline source
         shell: bash
         run: |
           set -euo pipefail
@@ -36,14 +38,18 @@ jobs:
           mkdir -p /tmp/yay-src
           tar -xzf /tmp/yay-source.tar.gz -C /tmp/yay-src
 
-      - name: Apply verified YAY V1.0.1 fixes
+      - name: Apply verified V1.0.1 fixes and V1.0.2 overlay
         shell: bash
         run: |
           set -euo pipefail
           cp -a yay-pi-ci/overlay/. /tmp/yay-src/
           cp yay-pi-ci/regression/test_final_image_regressions.py /tmp/yay-src/tests/test_final_image_regressions.py
+          cat yay-pi-ci/v102-overlay.b64.000 yay-pi-ci/v102-overlay.b64.001 yay-pi-ci/v102-overlay.b64.002 | base64 -d > /tmp/yay-v102-overlay.tar.gz
+          echo "$V102_OVERLAY_SHA256  /tmp/yay-v102-overlay.tar.gz" | sha256sum --check --strict
+          gzip -t /tmp/yay-v102-overlay.tar.gz
+          tar -xzf /tmp/yay-v102-overlay.tar.gz -C /tmp/yay-src
 
-      - name: Verify source and regression tests
+      - name: Verify V1.0.2 source and regression tests
         shell: bash
         run: |
           set -euo pipefail
@@ -52,6 +58,27 @@ jobs:
           python3 -m pytest -q
           node --test tests/renderer_test.mjs
           python3 -m compileall -q yay
+          bash -n image/inject-image.sh scripts/yay-control scripts/yay-firstboot scripts/yay-kiosk-session scripts/yay-detect-hardware
+          test "$(python3 -c 'import json; print(json.load(open("config/device.json"))["runtime_version"])')" = "pi-universal-1.0.2"
+          grep -q "SERVICE_PIN = '1453'" yay/service.py
+          ! grep -R -q '1453' web
+          grep -q 'Bağlantıyı Test Et' web/player.js
+          grep -q '/api/local/service/login' web/player.js
+          grep -q 'mark_auth_rejected' yay/agent.py
+          grep -q 'is_auth_error' yay/api.py
+
+      - name: Build exact V1.0.2 source ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp
+          rm -f "$SRC_NAME" "$SRC_NAME.sha256"
+          (cd yay-src && zip -q -r "/tmp/$SRC_NAME" .)
+          unzip -t "/tmp/$SRC_NAME" >/tmp/source-unzip-test.txt
+          sha256sum "$SRC_NAME" > "$SRC_NAME.sha256"
+          sha256sum --check "$SRC_NAME.sha256"
+          cat "$SRC_NAME.sha256"
+          stat --printf='%n %s bytes\n' "$SRC_NAME"
 
       - name: Install ARM64 image provisioning tools
         shell: bash
@@ -76,7 +103,7 @@ jobs:
           echo "$BASE_SHA256  $BASE_NAME" | sha256sum --check --strict
           xz -t "$BASE_NAME"
 
-      - name: Build YAY universal image
+      - name: Build YAY Universal V1.0.2 image
         shell: bash
         run: |
           set -euo pipefail
@@ -84,7 +111,7 @@ jobs:
           /tmp/yay-src/image/inject-image.sh "/tmp/$BASE_NAME" /tmp/yay-src "/tmp/$OUT_NAME"
           xz -t "/tmp/$OUT_NAME"
 
-      - name: Inspect final image contents and boot contract
+      - name: Inspect final V1.0.2 image contents and boot contract
         shell: bash
         run: |
           set -euo pipefail
@@ -103,6 +130,8 @@ jobs:
           sudo mount -o ro "${LOOP}p1" "$WORK/boot"
 
           test -f "$WORK/root/opt/yay/app/yay/agent.py"
+          test -f "$WORK/root/opt/yay/app/yay/service.py"
+          test -f "$WORK/root/opt/yay/app/yay/status.py"
           test -f "$WORK/root/opt/yay/web/renderer.js"
           test -x "$WORK/root/usr/bin/chromium"
           test -x "$WORK/root/usr/bin/xinit"
@@ -110,6 +139,8 @@ jobs:
           test -L "$WORK/root/etc/systemd/system/getty@tty1.service"
           test "$(readlink "$WORK/root/etc/systemd/system/getty@tty1.service")" = "/dev/null"
           test ! -e "$WORK/root/etc/systemd/system/multi-user.target.wants/yay-firstboot.service"
+          test -L "$WORK/root/etc/systemd/system/multi-user.target.wants/yay-agent.service"
+          test -L "$WORK/root/etc/systemd/system/multi-user.target.wants/yay-local-player.service"
           test -L "$WORK/root/etc/systemd/system/multi-user.target.wants/yay-kiosk.service"
           grep -q '^yay:' "$WORK/root/etc/passwd"
           grep -q 'Conflicts=getty@tty1.service' "$WORK/root/etc/systemd/system/yay-kiosk.service"
@@ -117,6 +148,21 @@ jobs:
           grep -q 'id="port"' "$WORK/root/opt/yay/web/player.js"
           grep -q 'id="protocol"' "$WORK/root/opt/yay/web/player.js"
           ! grep -q '8080' "$WORK/root/opt/yay/web/player.js"
+          grep -q '/api/local/service/login' "$WORK/root/opt/yay/web/player.js"
+          grep -q 'Bağlantı Ayarları' "$WORK/root/opt/yay/web/player.js"
+          grep -q 'Bağlantıyı Test Et' "$WORK/root/opt/yay/web/player.js"
+          grep -q 'Merkeze Yeniden Bağlan' "$WORK/root/opt/yay/web/player.js"
+          grep -q 'Yayını Yenile' "$WORK/root/opt/yay/web/player.js"
+          grep -q 'Telemetri Gönder' "$WORK/root/opt/yay/web/player.js"
+          grep -q 'Cihaz Bilgileri' "$WORK/root/opt/yay/web/player.js"
+          grep -q "Player'ı Yeniden Başlat" "$WORK/root/opt/yay/web/player.js"
+          grep -q 'Uygulamayı Kapat' "$WORK/root/opt/yay/web/player.js"
+          ! grep -q '1453' "$WORK/root/opt/yay/web/player.js"
+          grep -q "SERVICE_PIN = '1453'" "$WORK/root/opt/yay/app/yay/service.py"
+          grep -q 'agent-restart)' "$WORK/root/usr/local/sbin/yay-control"
+          grep -q 'player-stop)' "$WORK/root/usr/local/sbin/yay-control"
+          ! grep -q 'NoNewPrivileges=true' "$WORK/root/etc/systemd/system/yay-agent.service"
+          ! grep -q 'NoNewPrivileges=true' "$WORK/root/etc/systemd/system/yay-local-player.service"
           test -s "$WORK/boot/userconf.txt"
           grep -q '^yayadmin:' "$WORK/boot/userconf.txt"
 
@@ -124,7 +170,8 @@ jobs:
           import json
           d=json.load(open('/tmp/final-inspect/root/var/lib/yay/device.json', encoding='utf-8'))
           assert d['server_url'] == ''
-          assert d['runtime_version'] == 'pi-universal-1.0.0'
+          assert d['token'] == ''
+          assert d['runtime_version'] == 'pi-universal-1.0.2'
           PY
 
           test -f "$WORK/boot/bcm2710-rpi-3-b-plus.dtb"
@@ -134,7 +181,7 @@ jobs:
           trap - EXIT
           rm -f "$WORK/final.img"
 
-      - name: Generate final checksum
+      - name: Generate final checksums
         shell: bash
         run: |
           set -euo pipefail
@@ -142,49 +189,56 @@ jobs:
           sha256sum "$OUT_NAME" > "$OUT_NAME.sha256"
           xz -t "$OUT_NAME"
           sha256sum --check "$OUT_NAME.sha256"
+          sha256sum --check "$SRC_NAME.sha256"
           cat "$OUT_NAME.sha256"
-          stat --printf='%n %s bytes\n' "$OUT_NAME"
+          cat "$SRC_NAME.sha256"
+          stat --printf='%n %s bytes\n' "$OUT_NAME" "$SRC_NAME"
 
-      - name: Upload final single image to temporary GoFile server
+      - name: Upload final single image and exact source to temporary GoFile server
         shell: bash
         run: |
           set -euo pipefail
           cd /tmp
-          curl --fail-with-body --location --retry 3 --retry-all-errors \
-            --form "file=@$OUT_NAME" \
-            https://upload.gofile.io/uploadfile \
-            --output /tmp/gofile-response.json
-          cat /tmp/gofile-response.json
-          python3 - <<'PY'
-          import json
+          upload_gofile() {
+            local file="$1" out="$2" linkfile="$3"
+            curl --fail-with-body --location --retry 3 --retry-all-errors --form "file=@$file" https://upload.gofile.io/uploadfile --output "$out"
+            python3 - "$out" "$linkfile" <<'PY'
+          import json, sys
           from pathlib import Path
-          payload = json.loads(Path('/tmp/gofile-response.json').read_text(encoding='utf-8'))
-          if payload.get('status') != 'ok':
-              raise SystemExit(f"GoFile upload failed: {payload}")
+          payload=json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          if payload.get('status') != 'ok': raise SystemExit(payload)
           links=[]
-          def walk(value):
-              if isinstance(value, dict):
-                  for item in value.values(): walk(item)
-              elif isinstance(value, list):
-                  for item in value: walk(item)
-              elif isinstance(value, str) and value.startswith('https://gofile.io/d/'):
-                  links.append(value)
+          def walk(v):
+              if isinstance(v,dict):
+                  for x in v.values(): walk(x)
+              elif isinstance(v,list):
+                  for x in v: walk(x)
+              elif isinstance(v,str) and v.startswith('https://gofile.io/d/'):
+                  links.append(v)
           walk(payload)
-          if not links:
-              raise SystemExit(f"No GoFile download page in response: {payload}")
-          Path('/tmp/YAY-GoFile-link.txt').write_text(links[0]+'\n', encoding='utf-8')
-          print('YAY_GoFile_URL='+links[0])
+          if not links: raise SystemExit(payload)
+          Path(sys.argv[2]).write_text(links[0]+'\n',encoding='utf-8')
+          print(links[0])
           PY
-          PAGE=$(cat /tmp/YAY-GoFile-link.txt)
-          curl --fail --location --retry 3 --output /tmp/gofile-page-check.html "$PAGE"
-          test -s /tmp/gofile-page-check.html
+            local page
+            page=$(cat "$linkfile")
+            curl --fail --location --retry 3 --output /tmp/gofile-page-check.html "$page"
+            test -s /tmp/gofile-page-check.html
+          }
+          upload_gofile "$OUT_NAME" /tmp/gofile-image-response.json /tmp/YAY-GoFile-link.txt
+          upload_gofile "$SRC_NAME" /tmp/gofile-source-response.json /tmp/YAY-Source-GoFile-link.txt
+          echo "YAY_IMAGE_GoFile_URL=$(cat /tmp/YAY-GoFile-link.txt)"
+          echo "YAY_SOURCE_GoFile_URL=$(cat /tmp/YAY-Source-GoFile-link.txt)"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: YAY-Pi-V1.0.1-final-sha256-and-link
+          name: YAY-Pi-V1.0.2-final-verification-and-source
           path: |
-            /tmp/YAY-Pi-Universal-V1.0.1-RPi3-4-5.img.xz.sha256
+            /tmp/YAY-Pi-Universal-V1.0.2-RPi3-4-5.img.xz.sha256
+            /tmp/YAY-Pi-Universal-V1.0.2-SOURCE.zip
+            /tmp/YAY-Pi-Universal-V1.0.2-SOURCE.zip.sha256
             /tmp/YAY-GoFile-link.txt
+            /tmp/YAY-Source-GoFile-link.txt
           compression-level: 0
           if-no-files-found: error
           retention-days: 7

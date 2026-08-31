@@ -22,14 +22,24 @@ cleanup(){
 trap cleanup EXIT
 
 command -v qemu-aarch64-static >/dev/null || { echo 'qemu-aarch64-static is required on build host' >&2; exit 4; }
+command -v growpart >/dev/null || { echo 'growpart is required on build host' >&2; exit 4; }
 
 xz -t "$BASE"
 xz -dc "$BASE" > "$WORK/base.img"
+# The official Lite image intentionally leaves little free space. Grow the
+# image/rootfs before installing Chromium/X11 so package installation is done
+# once at build time rather than on the Raspberry Pi.
+truncate -s +2G "$WORK/base.img"
 LOOP=$(sudo losetup --find --show --partscan "$WORK/base.img")
+sudo growpart "$LOOP" 2
+sudo partprobe "$LOOP" || true
+sudo losetup -c "$LOOP"
 ROOTPART="${LOOP}p2"
 BOOTPART="${LOOP}p1"
 [ -b "$ROOTPART" ] || { echo 'rootfs partition p2 not found' >&2; exit 3; }
 [ -b "$BOOTPART" ] || { echo 'boot partition p1 not found' >&2; exit 3; }
+sudo e2fsck -f -y "$ROOTPART"
+sudo resize2fs "$ROOTPART"
 mkdir -p "$ROOT" "$BOOT"
 sudo mount "$ROOTPART" "$ROOT"
 sudo mount "$BOOTPART" "$BOOT"
@@ -65,13 +75,13 @@ sudo mount -t sysfs sys "$ROOT/sys"
 sudo chroot "$ROOT" /usr/bin/qemu-aarch64-static /bin/bash -lc '
   set -euo pipefail
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -o Acquire::Retries=5
+  apt-get update -o Acquire::Retries=5 -o Acquire::PDiffs=false
   apt-get install -y --no-install-recommends xserver-xorg xinit openbox chromium python3-requests python3-cryptography scrot watchdog fonts-dejavu-core ca-certificates
   id yay >/dev/null 2>&1 || useradd -r -m -s /usr/sbin/nologin yay
   usermod -a -G video,audio,input,render yay || true
   chown -R yay:yay /var/lib/yay /home/yay
   apt-get clean
-  rm -rf /var/lib/apt/lists/*
+  rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
 '
 
 sudo rm -f "$ROOT/usr/sbin/policy-rc.d" "$ROOT/usr/bin/qemu-aarch64-static" "$ROOT/etc/resolv.conf"

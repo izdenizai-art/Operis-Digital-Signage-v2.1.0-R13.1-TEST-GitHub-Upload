@@ -1,0 +1,120 @@
+name: YAY Pi Universal Build
+
+on:
+  push:
+    branches: [yay-pi-universal-build-v2]
+    paths:
+      - '.github/workflows/yay-pi-universal-build.yml'
+      - 'yay-pi-ci/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      BASE_NAME: 2026-06-18-raspios-trixie-arm64-lite.img.xz
+      BASE_URL: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2026-06-19/2026-06-18-raspios-trixie-arm64-lite.img.xz
+      BASE_SHA_URL: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2026-06-19/2026-06-18-raspios-trixie-arm64-lite.img.xz.sha256
+      BASE_SHA256: acff736ca7945e3b305f07cda4abdb870910e12634991da69783611756e381b3
+      OUT_NAME: YAY-Pi-Universal-V1.0.0-RPi3-4-5.img.xz
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct exact YAY source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat yay-pi-ci/source.b64.000 yay-pi-ci/source.b64.001 yay-pi-ci/source.b64.002 | base64 -d > /tmp/yay-source.tar.gz
+          gzip -t /tmp/yay-source.tar.gz
+          expected=$(awk '{print $1}' yay-pi-ci/source.sha256)
+          actual=$(sha256sum /tmp/yay-source.tar.gz | awk '{print $1}')
+          test "$actual" = "$expected"
+          mkdir -p /tmp/yay-src
+          tar -xzf /tmp/yay-source.tar.gz -C /tmp/yay-src
+
+      - name: Verify source tests again
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/yay-src
+          python3 -m pip install --disable-pip-version-check -q pytest requests cryptography
+          python3 -m pytest -q
+          node --test tests/renderer_test.mjs
+          python3 -m compileall -q yay
+
+      - name: Download and verify official Raspberry Pi OS base
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp
+          curl --fail --location --retry 5 --retry-all-errors --output "$BASE_NAME" "$BASE_URL"
+          curl --fail --location --retry 5 --retry-all-errors --output "$BASE_NAME.sha256" "$BASE_SHA_URL"
+          official=$(awk '{print $1}' "$BASE_NAME.sha256" | head -n1)
+          test "$official" = "$BASE_SHA256"
+          echo "$BASE_SHA256  $BASE_NAME" | sha256sum --check --strict
+          xz -t "$BASE_NAME"
+
+      - name: Build YAY universal image
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x /tmp/yay-src/image/inject-image.sh
+          /tmp/yay-src/image/inject-image.sh "/tmp/$BASE_NAME" /tmp/yay-src "/tmp/$OUT_NAME"
+          xz -t "/tmp/$OUT_NAME"
+
+      - name: Inspect final image contents and Pi boot support
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK=/tmp/final-inspect
+          mkdir -p "$WORK/root" "$WORK/boot"
+          xz -dc "/tmp/$OUT_NAME" > "$WORK/final.img"
+          LOOP=$(sudo losetup --find --show --partscan "$WORK/final.img")
+          cleanup() {
+            set +e
+            mountpoint -q "$WORK/root" && sudo umount "$WORK/root"
+            mountpoint -q "$WORK/boot" && sudo umount "$WORK/boot"
+            sudo losetup -d "$LOOP" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          sudo mount -o ro "${LOOP}p2" "$WORK/root"
+          sudo mount -o ro "${LOOP}p1" "$WORK/boot"
+          test -f "$WORK/root/opt/yay/app/yay/agent.py"
+          test -f "$WORK/root/opt/yay/web/renderer.js"
+          test -f "$WORK/root/etc/systemd/system/yay-firstboot.service"
+          test -L "$WORK/root/etc/systemd/system/multi-user.target.wants/yay-firstboot.service"
+          test -f "$WORK/root/var/lib/yay/device.json"
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/final-inspect/root/var/lib/yay/device.json', encoding='utf-8'))
+          assert d['server_url'] == ''
+          assert d['runtime_version'] == 'pi-universal-1.0.0'
+          PY
+          test -f "$WORK/boot/bcm2710-rpi-3-b-plus.dtb"
+          test -f "$WORK/boot/bcm2711-rpi-4-b.dtb"
+          test -f "$WORK/boot/bcm2712-rpi-5-b.dtb"
+          cleanup
+          trap - EXIT
+          rm -f "$WORK/final.img"
+
+      - name: Generate final checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp
+          sha256sum "$OUT_NAME" > "$OUT_NAME.sha256"
+          cat "$OUT_NAME.sha256"
+          stat --printf='%n %s bytes\n' "$OUT_NAME" "$OUT_NAME.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YAY-Pi-Universal-V1.0.0-RPi3-4-5
+          path: |
+            /tmp/YAY-Pi-Universal-V1.0.0-RPi3-4-5.img.xz
+            /tmp/YAY-Pi-Universal-V1.0.0-RPi3-4-5.img.xz.sha256
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7

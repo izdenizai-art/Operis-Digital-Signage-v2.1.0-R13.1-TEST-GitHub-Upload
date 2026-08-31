@@ -21,13 +21,11 @@ jobs:
           cat yay-pi-ci/source.b64.000 yay-pi-ci/source.b64.001 yay-pi-ci/source.b64.002 | base64 -d > /tmp/yay-source.tar.gz
           mkdir -p /tmp/yay-src
           tar -xzf /tmp/yay-source.tar.gz -C /tmp/yay-src
-          echo '=== FILE LIST ==='
-          find /tmp/yay-src -maxdepth 3 -type f | sort
           echo '=== KIOSK UNIT ==='
           cat /tmp/yay-src/systemd/yay-kiosk.service
-          echo '=== FIRSTBOOT ==='
-          cat /tmp/yay-src/scripts/firstboot.sh
-          echo '=== KIOSK SCRIPT ==='
-          cat /tmp/yay-src/scripts/kiosk.sh
+          echo '=== FIRSTBOOT SCRIPT ==='
+          cat /tmp/yay-src/scripts/yay-firstboot
+          echo '=== KIOSK SESSION SCRIPT ==='
+          cat /tmp/yay-src/scripts/yay-kiosk-session
           echo '=== OTHER X REFERENCES ==='
           grep -RInE 'xinit|Xorg|chromium|openbox|startx|vt[0-9]|DISPLAY=' /tmp/yay-src || true

@@ -1,0 +1,105 @@
+name: YAY Pi V1.0.1 Source Package
+
+on:
+  push:
+    branches: [yay-pi-universal-build-v2]
+    paths:
+      - '.github/workflows/yay-source-package.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct exact source used by image build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat yay-pi-ci/source.b64.000 yay-pi-ci/source.b64.001 yay-pi-ci/source.b64.002 | base64 -d > /tmp/yay-source.tar.gz
+          gzip -t /tmp/yay-source.tar.gz
+          expected=$(awk '{print $1}' yay-pi-ci/source.sha256)
+          actual=$(sha256sum /tmp/yay-source.tar.gz | awk '{print $1}')
+          test "$actual" = "$expected"
+          rm -rf /tmp/yay-src
+          mkdir -p /tmp/yay-src
+          tar -xzf /tmp/yay-source.tar.gz -C /tmp/yay-src
+
+      - name: Apply V1.0.1 image fixes and regression test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a yay-pi-ci/overlay/. /tmp/yay-src/
+          cp yay-pi-ci/regression/test_final_image_regressions.py /tmp/yay-src/tests/test_final_image_regressions.py
+          cat > /tmp/yay-src/SOURCE-BUILD-INFO.txt <<'EOF'
+          YAY Pi Universal V1.0.1 source package
+          Image build branch: yay-pi-universal-build-v2
+          Image build commit: 3f9dcc295808fe9d031a4053b122cf41a3131316
+          Package contents = reconstructed base source + V1.0.1 overlay + final regression test.
+          EOF
+
+      - name: Verify packaged source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/yay-src
+          python3 -m pip install --disable-pip-version-check -q pytest requests cryptography
+          python3 -m pytest -q
+          node --test tests/renderer_test.mjs
+          python3 -m compileall -q yay
+          test -f web/player.js
+          grep -q 'if(!setupVisible)' web/player.js
+          grep -q 'Conflicts=getty@tty1.service' systemd/yay-kiosk.service
+          grep -q 'test_image_provisions_gui_before_first_boot_and_bypasses_user_wizard' tests/test_final_image_regressions.py
+
+      - name: Build source ZIP and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp
+          rm -f YAY-Pi-Universal-V1.0.1-SOURCE.zip YAY-Pi-Universal-V1.0.1-SOURCE.zip.sha256
+          (cd yay-src && zip -q -r /tmp/YAY-Pi-Universal-V1.0.1-SOURCE.zip .)
+          unzip -t /tmp/YAY-Pi-Universal-V1.0.1-SOURCE.zip >/tmp/source-unzip-test.txt
+          sha256sum /tmp/YAY-Pi-Universal-V1.0.1-SOURCE.zip > /tmp/YAY-Pi-Universal-V1.0.1-SOURCE.zip.sha256
+          sha256sum --check /tmp/YAY-Pi-Universal-V1.0.1-SOURCE.zip.sha256
+          cat /tmp/YAY-Pi-Universal-V1.0.1-SOURCE.zip.sha256
+          stat --printf='%n %s bytes\n' /tmp/YAY-Pi-Universal-V1.0.1-SOURCE.zip
+
+      - name: Upload source ZIP to temporary GoFile server
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --location --retry 3 --retry-all-errors \
+            --form 'file=@/tmp/YAY-Pi-Universal-V1.0.1-SOURCE.zip' \
+            https://upload.gofile.io/uploadfile \
+            --output /tmp/gofile-source-response.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          payload=json.loads(Path('/tmp/gofile-source-response.json').read_text(encoding='utf-8'))
+          if payload.get('status') != 'ok':
+              raise SystemExit(payload)
+          page=(payload.get('data') or {}).get('downloadPage')
+          if not page:
+              raise SystemExit(payload)
+          Path('/tmp/YAY-Source-GoFile-link.txt').write_text(page+'\n', encoding='utf-8')
+          print('YAY_SOURCE_GoFile_URL='+page)
+          PY
+          PAGE=$(cat /tmp/YAY-Source-GoFile-link.txt)
+          curl --fail --location --retry 3 --output /tmp/gofile-source-page-check.html "$PAGE"
+          test -s /tmp/gofile-source-page-check.html
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YAY-Pi-V1.0.1-source-package
+          path: |
+            /tmp/YAY-Pi-Universal-V1.0.1-SOURCE.zip
+            /tmp/YAY-Pi-Universal-V1.0.1-SOURCE.zip.sha256
+            /tmp/YAY-Source-GoFile-link.txt
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7

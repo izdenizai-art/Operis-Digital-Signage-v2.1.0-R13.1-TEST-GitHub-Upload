@@ -13,13 +13,13 @@ permissions:
 jobs:
   build-image:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
       BASE_NAME: 2026-06-18-raspios-trixie-arm64-lite.img.xz
       BASE_URL: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2026-06-19/2026-06-18-raspios-trixie-arm64-lite.img.xz
       BASE_SHA_URL: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2026-06-19/2026-06-18-raspios-trixie-arm64-lite.img.xz.sha256
       BASE_SHA256: acff736ca7945e3b305f07cda4abdb870910e12634991da69783611756e381b3
-      OUT_NAME: YAY-Pi-Universal-V1.0.0-RPi3-4-5.img.xz
+      OUT_NAME: YAY-Pi-Universal-V1.0.1-RPi3-4-5.img.xz
     steps:
       - uses: actions/checkout@v4
 
@@ -32,10 +32,18 @@ jobs:
           expected=$(awk '{print $1}' yay-pi-ci/source.sha256)
           actual=$(sha256sum /tmp/yay-source.tar.gz | awk '{print $1}')
           test "$actual" = "$expected"
+          rm -rf /tmp/yay-src
           mkdir -p /tmp/yay-src
           tar -xzf /tmp/yay-source.tar.gz -C /tmp/yay-src
 
-      - name: Verify source tests again
+      - name: Apply verified YAY V1.0.1 fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a yay-pi-ci/overlay/. /tmp/yay-src/
+          cp yay-pi-ci/regression/test_final_image_regressions.py /tmp/yay-src/tests/test_final_image_regressions.py
+
+      - name: Verify source and regression tests
         shell: bash
         run: |
           set -euo pipefail
@@ -44,6 +52,15 @@ jobs:
           python3 -m pytest -q
           node --test tests/renderer_test.mjs
           python3 -m compileall -q yay
+
+      - name: Install ARM64 image provisioning tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static binfmt-support
+          sudo update-binfmts --enable qemu-aarch64 || true
+          command -v qemu-aarch64-static
 
       - name: Download and verify official Raspberry Pi OS base
         shell: bash
@@ -65,7 +82,7 @@ jobs:
           /tmp/yay-src/image/inject-image.sh "/tmp/$BASE_NAME" /tmp/yay-src "/tmp/$OUT_NAME"
           xz -t "/tmp/$OUT_NAME"
 
-      - name: Inspect final image contents and Pi boot support
+      - name: Inspect final image contents and boot contract
         shell: bash
         run: |
           set -euo pipefail
@@ -82,17 +99,32 @@ jobs:
           trap cleanup EXIT
           sudo mount -o ro "${LOOP}p2" "$WORK/root"
           sudo mount -o ro "${LOOP}p1" "$WORK/boot"
+
           test -f "$WORK/root/opt/yay/app/yay/agent.py"
           test -f "$WORK/root/opt/yay/web/renderer.js"
-          test -f "$WORK/root/etc/systemd/system/yay-firstboot.service"
-          test -L "$WORK/root/etc/systemd/system/multi-user.target.wants/yay-firstboot.service"
-          test -f "$WORK/root/var/lib/yay/device.json"
+          test -x "$WORK/root/usr/bin/chromium"
+          test -x "$WORK/root/usr/bin/xinit"
+          test -x "$WORK/root/usr/bin/openbox-session"
+          test -L "$WORK/root/etc/systemd/system/getty@tty1.service"
+          test "$(readlink "$WORK/root/etc/systemd/system/getty@tty1.service")" = "/dev/null"
+          test ! -e "$WORK/root/etc/systemd/system/multi-user.target.wants/yay-firstboot.service"
+          test -L "$WORK/root/etc/systemd/system/multi-user.target.wants/yay-kiosk.service"
+          grep -q '^yay:' "$WORK/root/etc/passwd"
+          grep -q 'Conflicts=getty@tty1.service' "$WORK/root/etc/systemd/system/yay-kiosk.service"
+          grep -q 'id="host"' "$WORK/root/opt/yay/web/player.js"
+          grep -q 'id="port"' "$WORK/root/opt/yay/web/player.js"
+          grep -q 'id="protocol"' "$WORK/root/opt/yay/web/player.js"
+          ! grep -q '8080' "$WORK/root/opt/yay/web/player.js"
+          test -s "$WORK/boot/userconf.txt"
+          grep -q '^yayadmin:' "$WORK/boot/userconf.txt"
+
           sudo python3 - <<'PY'
           import json
           d=json.load(open('/tmp/final-inspect/root/var/lib/yay/device.json', encoding='utf-8'))
           assert d['server_url'] == ''
           assert d['runtime_version'] == 'pi-universal-1.0.0'
           PY
+
           test -f "$WORK/boot/bcm2710-rpi-3-b-plus.dtb"
           test -f "$WORK/boot/bcm2711-rpi-4-b.dtb"
           test -f "$WORK/boot/bcm2712-rpi-5-b.dtb"
@@ -124,27 +156,22 @@ jobs:
           python3 - <<'PY'
           import json
           from pathlib import Path
-
           payload = json.loads(Path('/tmp/gofile-response.json').read_text(encoding='utf-8'))
           if payload.get('status') != 'ok':
               raise SystemExit(f"GoFile upload failed: {payload}")
-
-          links = []
+          links=[]
           def walk(value):
               if isinstance(value, dict):
-                  for item in value.values():
-                      walk(item)
+                  for item in value.values(): walk(item)
               elif isinstance(value, list):
-                  for item in value:
-                      walk(item)
+                  for item in value: walk(item)
               elif isinstance(value, str) and value.startswith('https://gofile.io/d/'):
                   links.append(value)
           walk(payload)
           if not links:
               raise SystemExit(f"No GoFile download page in response: {payload}")
-          page = links[0]
-          Path('/tmp/YAY-GoFile-link.txt').write_text(page + '\n', encoding='utf-8')
-          print('YAY_GoFile_URL=' + page)
+          Path('/tmp/YAY-GoFile-link.txt').write_text(links[0]+'\n', encoding='utf-8')
+          print('YAY_GoFile_URL='+links[0])
           PY
           PAGE=$(cat /tmp/YAY-GoFile-link.txt)
           curl --fail --location --retry 3 --output /tmp/gofile-page-check.html "$PAGE"
@@ -152,9 +179,9 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: YAY-Pi-final-sha256-and-link
+          name: YAY-Pi-V1.0.1-final-sha256-and-link
           path: |
-            /tmp/YAY-Pi-Universal-V1.0.0-RPi3-4-5.img.xz.sha256
+            /tmp/YAY-Pi-Universal-V1.0.1-RPi3-4-5.img.xz.sha256
             /tmp/YAY-GoFile-link.txt
           compression-level: 0
           if-no-files-found: error

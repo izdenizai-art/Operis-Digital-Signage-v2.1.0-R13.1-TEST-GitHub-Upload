@@ -1,0 +1,58 @@
+name: YAY Pi Universal Verify
+
+on:
+  push:
+    branches: [yay-pi-universal-build-v2]
+    paths:
+      - 'yay-pi-ci/**'
+      - '.github/workflows/yay-pi-universal-verify.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct source bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat yay-pi-ci/source.b64.* | base64 -d > /tmp/yay-pi-source.tar.gz
+          gzip -t /tmp/yay-pi-source.tar.gz
+          mkdir -p /tmp/yay-src
+          tar -xzf /tmp/yay-pi-source.tar.gz -C /tmp/yay-src
+          echo '=== SOURCE TREE ==='
+          find /tmp/yay-src -maxdepth 3 -type f -printf '%P\n' | sort
+          echo '=== ARCHIVE SHA256 ==='
+          sha256sum /tmp/yay-pi-source.tar.gz
+      - name: Run Python tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/yay-src
+          if find . -maxdepth 3 -type f -name 'test_*.py' -o -name '*_test.py' | grep -q .; then
+            python3 -m pip install --disable-pip-version-check -q pytest requests
+            python3 -m pytest -q
+          else
+            echo 'No Python tests found'
+          fi
+      - name: Run Node tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/yay-src
+          mapfile -t tests < <(find . -type f -path '*/tests/*.mjs' | sort)
+          if [ ${#tests[@]} -gt 0 ]; then
+            node --test "${tests[@]}"
+          else
+            echo 'No Node .mjs tests found'
+          fi
+      - name: Compile Python source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/yay-src
+          python3 -m compileall -q .

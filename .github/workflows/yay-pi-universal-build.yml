@@ -100,21 +100,43 @@ jobs:
           trap - EXIT
           rm -f "$WORK/final.img"
 
-      - name: Generate final checksum
+      - name: Generate final checksum and internal transport chunks
         shell: bash
         run: |
           set -euo pipefail
           cd /tmp
           sha256sum "$OUT_NAME" > "$OUT_NAME.sha256"
+          xz -t "$OUT_NAME"
+          mkdir -p /tmp/yay-transport
+          split -b 300M -d -a 2 "$OUT_NAME" /tmp/yay-transport/part-
+          test "$(find /tmp/yay-transport -type f | wc -l)" -eq 2
+          cat /tmp/yay-transport/part-00 /tmp/yay-transport/part-01 > /tmp/transport-check.img.xz
+          cmp "$OUT_NAME" /tmp/transport-check.img.xz
+          sha256sum --check "$OUT_NAME.sha256"
+          rm /tmp/transport-check.img.xz
           cat "$OUT_NAME.sha256"
-          stat --printf='%n %s bytes\n' "$OUT_NAME" "$OUT_NAME.sha256"
+          stat --printf='%n %s bytes\n' "$OUT_NAME" /tmp/yay-transport/part-00 /tmp/yay-transport/part-01
 
       - uses: actions/upload-artifact@v4
         with:
-          name: YAY-Pi-Universal-V1.0.0-RPi3-4-5
-          path: |
-            /tmp/YAY-Pi-Universal-V1.0.0-RPi3-4-5.img.xz
-            /tmp/YAY-Pi-Universal-V1.0.0-RPi3-4-5.img.xz.sha256
+          name: YAY-Pi-internal-part-00
+          path: /tmp/yay-transport/part-00
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YAY-Pi-internal-part-01
+          path: /tmp/yay-transport/part-01
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YAY-Pi-final-sha256
+          path: /tmp/YAY-Pi-Universal-V1.0.0-RPi3-4-5.img.xz.sha256
           compression-level: 0
           if-no-files-found: error
           retention-days: 7
